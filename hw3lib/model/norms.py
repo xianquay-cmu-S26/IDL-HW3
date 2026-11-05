@@ -37,8 +37,7 @@ class RMSNorm(nn.Module):
         # TODO: Implement __init__
 
         # TODO: Initialize the learnable scale
-        self.weight = NotImplementedError
-        raise NotImplementedError # Remove once implemented
+        self.weight = nn.Parameter(torch.ones(d_model))
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         '''
@@ -52,7 +51,9 @@ class RMSNorm(nn.Module):
         # Step 1: Compute the root mean square over the last dimension in float32, keeping the dimension
         # Step 2: Divide the input by it, then cast back to the input dtype
         # Step 3: Apply the learnable scale
-        raise NotImplementedError # Remove once implemented
+        x_fp32 = x.float()
+        rms = torch.sqrt(x_fp32.pow(2).mean(dim=-1, keepdim=True) + self.eps)
+        return (x_fp32 / rms * self.weight.float()).to(x.dtype)
 
 ## -------------------------------------------------------------------------------------------------
 

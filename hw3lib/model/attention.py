@@ -64,14 +64,13 @@ class MultiHeadAttention(nn.Module):
         # TODO: Implement __init__
 
         # TODO: Initialize the dropout applied to the attention weights
-        self.dropout  = NotImplementedError
+        self.dropout  = nn.Dropout(dropout)
 
         # TODO: Initialize the projections, each embed_dim -> embed_dim
-        self.q_proj   = NotImplementedError
-        self.k_proj   = NotImplementedError
-        self.v_proj   = NotImplementedError
-        self.out_proj = NotImplementedError
-        raise NotImplementedError # Remove once implemented
+        self.q_proj   = nn.Linear(embed_dim, embed_dim)
+        self.k_proj   = nn.Linear(embed_dim, embed_dim)
+        self.v_proj   = nn.Linear(embed_dim, embed_dim)
+        self.out_proj = nn.Linear(embed_dim, embed_dim)
 
     def forward(self, query: torch.Tensor, key: torch.Tensor, value: torch.Tensor,
                 key_padding_mask: Optional[torch.Tensor] = None,
@@ -92,34 +91,46 @@ class MultiHeadAttention(nn.Module):
         '''
         # TODO: Implement forward
 
+        N, L, _ = query.shape
+        S = key.size(1)
+
         # TODO: Project the inputs
-        q = NotImplementedError
-        k = NotImplementedError
-        v = NotImplementedError
+        q = self.q_proj(query)
+        k = self.k_proj(key)
+        v = self.v_proj(value)
 
         # TODO: Reshape for multiple heads
-        q = NotImplementedError
-        k = NotImplementedError
-        v = NotImplementedError
+        q = self._split_heads(q)  # (N, H, L, D)
+        k = self._split_heads(k)  # (N, H, S, D)
+        v = self._split_heads(v)  # (N, H, S, D)
 
         # TODO: Apply QK-Norm and rotary embeddings to the queries and keys, if enabled
+        if self.q_norm is not None:
+            q = self.q_norm(q)
+            k = self.k_norm(k)
+        if self.rope is not None:
+            q, k = self.rope(q, k)
 
         # TODO: Combine the padding and attention masks
-        mask = NotImplementedError
+        mask = self._merge_masks(key_padding_mask, attn_mask, N, L, S)
 
         # TODO: Score, mask, normalize and apply dropout to get the attention weights
         # Scale the scores by the square root of head_dim before masking
-        attn_weights = NotImplementedError
+        scores = torch.matmul(q, k.transpose(-2, -1)) / (self.head_dim ** 0.5)  # (N, H, L, S)
+        if mask is not None:
+            scores = scores.masked_fill(mask, float('-inf'))
+        attn_weights = torch.softmax(scores, dim=-1)
+        attn_weights = self.dropout(attn_weights)
 
         # TODO: Apply the attention weights to the values
-        attn_output = NotImplementedError
+        attn_output = torch.matmul(attn_weights.to(v.dtype), v)  # (N, H, L, D)
 
         # TODO: Merge the heads
-        attn_output = NotImplementedError
+        attn_output = self._concat_heads(attn_output)  # (N, L, E)
 
         # TODO: Final projection, and average the attention weights over the heads
-        output = NotImplementedError
-        raise NotImplementedError # Remove once implemented
+        output = self.out_proj(attn_output)
+        return output, attn_weights.mean(dim=1)
 
     def _merge_masks(self, key_padding_mask: Optional[torch.Tensor],
                      attn_mask: Optional[torch.Tensor], N: int, L: int, S: int) -> Optional[torch.Tensor]:
@@ -135,8 +146,13 @@ class MultiHeadAttention(nn.Module):
             Optional[torch.Tensor]: The combined mask, broadcastable to
                                     (N, num_heads, L, S), or None if both were None.
         '''
-        # TODO: Implement _merge_masks
-        raise NotImplementedError # Remove once implemented
+        mask = None
+        if key_padding_mask is not None:
+            mask = key_padding_mask.bool().view(N, 1, 1, S)
+        if attn_mask is not None:
+            am = attn_mask.bool().view(1, 1, L, S)
+            mask = am if mask is None else (mask | am)
+        return mask
 
     def _split_heads(self, x: torch.Tensor) -> torch.Tensor:
         '''
@@ -146,8 +162,8 @@ class MultiHeadAttention(nn.Module):
         Returns:
             torch.Tensor: Reshaped tensor. shape: (N, num_heads, L, head_dim)
         '''
-        # TODO: Implement _split_heads
-        raise NotImplementedError # Remove once implemented
+        N, L, _ = x.shape
+        return x.view(N, L, self.num_heads, self.head_dim).transpose(1, 2)
 
     def _concat_heads(self, x: torch.Tensor) -> torch.Tensor:
         '''
@@ -157,5 +173,5 @@ class MultiHeadAttention(nn.Module):
         Returns:
             torch.Tensor: Reshaped tensor. shape: (N, L, embed_dim)
         '''
-        # TODO: Implement _concat_heads
-        raise NotImplementedError # Remove once implemented
+        N, _, L, _ = x.shape
+        return x.transpose(1, 2).contiguous().view(N, L, self.embed_dim)

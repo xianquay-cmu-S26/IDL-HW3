@@ -58,10 +58,9 @@ class SelfAttentionLayer(nn.Module):
             qk_norm  (bool): Whether to normalize the queries and keys before scoring.
         '''
         super().__init__()
-        self.mha = NotImplementedError
-        self.norm = NotImplementedError
-        self.dropout = NotImplementedError
-        raise NotImplementedError
+        self.mha = MultiHeadAttention(d_model, num_heads, dropout=dropout, rope=rope, qk_norm=qk_norm)
+        self.norm = create_norm(norm_type, d_model)
+        self.dropout = nn.Dropout(dropout)
 
 
     def forward(self, x: torch.Tensor, key_padding_mask: Optional[torch.Tensor] = None, attn_mask: Optional[torch.Tensor] = None) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -76,8 +75,11 @@ class SelfAttentionLayer(nn.Module):
             x (torch.Tensor): Output tensor, shape (batch_size, seq_len, d_model)
             mha_attn_weights (torch.Tensor): Attention weights, shape (batch_size, seq_len, seq_len)
         '''
-        x, mha_attn_weights = NotImplementedError, NotImplementedError
-        raise NotImplementedError
+        residual = x
+        x = self.norm(x)
+        x, mha_attn_weights = self.mha(x, x, x, key_padding_mask=key_padding_mask, attn_mask=attn_mask)
+        x = residual + self.dropout(x)
+        return x, mha_attn_weights
 
 ## -------------------------------------------------------------------------------------------------
 class CrossAttentionLayer(nn.Module):
@@ -112,10 +114,9 @@ class CrossAttentionLayer(nn.Module):
             qk_norm  (bool): Whether to normalize the queries and keys before scoring.
         '''
         super().__init__()
-        self.mha = NotImplementedError
-        self.norm = NotImplementedError
-        self.dropout = NotImplementedError
-        raise NotImplementedError
+        self.mha = MultiHeadAttention(d_model, num_heads, dropout=dropout, rope=None, qk_norm=qk_norm)
+        self.norm = create_norm(norm_type, d_model)
+        self.dropout = nn.Dropout(dropout)
 
     def forward(self, x: torch.Tensor, y: torch.Tensor, key_padding_mask: Optional[torch.Tensor] = None, attn_mask: Optional[torch.Tensor] = None) -> Tuple[torch.Tensor, torch.Tensor]:
         '''
@@ -131,8 +132,11 @@ class CrossAttentionLayer(nn.Module):
             x (torch.Tensor): Output tensor, shape (batch_size, dec_seq_len, d_model)
             mha_attn_weights (torch.Tensor): Attention weights, shape (batch_size, dec_seq_len, enc_seq_len)
         '''
-        x, mha_attn_weights = NotImplementedError, NotImplementedError
-        raise NotImplementedError
+        residual = x
+        x = self.norm(x)
+        x, mha_attn_weights = self.mha(x, y, y, key_padding_mask=key_padding_mask, attn_mask=attn_mask)
+        x = residual + self.dropout(x)
+        return x, mha_attn_weights
 
 ## -------------------------------------------------------------------------------------------------
 class SwiGLU(nn.Module):
@@ -166,10 +170,10 @@ class SwiGLU(nn.Module):
         # TODO: Implement __init__
 
         # TODO: Initialize the three projections
-        self.gate_proj = NotImplementedError
-        self.up_proj   = NotImplementedError
-        self.down_proj = NotImplementedError
-        raise NotImplementedError # Remove once implemented
+        d_hidden = (2 * d_ff) // 3
+        self.gate_proj = nn.Linear(d_model, d_hidden, bias=False)
+        self.up_proj   = nn.Linear(d_model, d_hidden, bias=False)
+        self.down_proj = nn.Linear(d_hidden, d_model, bias=False)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         '''
@@ -180,8 +184,7 @@ class SwiGLU(nn.Module):
         Returns:
             x (torch.Tensor): Output tensor, shape (batch_size, seq_len, d_model)
         '''
-        # TODO: Implement forward
-        raise NotImplementedError # Remove once implemented
+        return self.down_proj(nn.functional.silu(self.gate_proj(x)) * self.up_proj(x))
 
 ## -------------------------------------------------------------------------------------------------
 class FeedForwardLayer(nn.Module):
@@ -221,10 +224,17 @@ class FeedForwardLayer(nn.Module):
         if ffn_type not in ['swiglu', 'gelu']:
             raise ValueError("ffn_type must be 'swiglu' or 'gelu'")
 
-        self.ffn = NotImplementedError
-        self.norm = NotImplementedError
-        self.dropout = NotImplementedError
-        raise NotImplementedError
+        if ffn_type == 'gelu':
+            self.ffn = nn.Sequential(
+                nn.Linear(d_model, d_ff),
+                nn.GELU(),
+                nn.Dropout(dropout),
+                nn.Linear(d_ff, d_model),
+            )
+        else:
+            self.ffn = SwiGLU(d_model, d_ff)
+        self.norm = create_norm(norm_type, d_model)
+        self.dropout = nn.Dropout(dropout)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         '''
@@ -235,6 +245,8 @@ class FeedForwardLayer(nn.Module):
         Returns:
             x (torch.Tensor): Output tensor, shape (batch_size, seq_len, d_model)
         '''
-        x = NotImplementedError
-        raise NotImplementedError
+        residual = x
+        x = self.norm(x)
+        x = self.ffn(x)
+        return residual + self.dropout(x)
 
